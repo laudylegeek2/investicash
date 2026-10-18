@@ -1,0 +1,19 @@
+<?php
+require_once __DIR__.'/../app/bootstrap.php';
+if(me($pdo)) go('payment.php');
+$error=''; $ref=trim((string)($_GET['ref']??''));
+if($_SERVER['REQUEST_METHOD']==='POST'){
+ check_csrf(); $name=trim((string)($_POST['name']??'')); $email=strtolower(trim((string)($_POST['email']??''))); $phone=trim((string)($_POST['phone']??'')); $pw=(string)($_POST['password']??''); $pw2=(string)($_POST['password2']??''); $ref=trim((string)($_POST['ref']??''));
+ if(mb_strlen($name)<2||mb_strlen($name)>120) $error='Nom invalide.';
+ elseif(!filter_var($email,FILTER_VALIDATE_EMAIL)) $error='Adresse e-mail invalide.';
+ elseif(strlen($pw)<10||!preg_match('/[A-Za-z]/',$pw)||!preg_match('/[0-9]/',$pw)) $error='Mot de passe : 10 caractères minimum, une lettre et un chiffre.';
+ elseif($pw!==$pw2) $error='Les mots de passe ne correspondent pas.';
+ elseif(empty($_POST['terms'])) $error='Vous devez accepter les conditions.';
+ else { try { $pdo->beginTransaction(); $sponsor=null;
+   if($ref!==''){ $s=$pdo->prepare("SELECT id FROM users WHERE referral_code=? AND status='active'");$s->execute([$ref]);$sp=$s->fetch();if(!$sp)throw new RuntimeException('Code de parrainage invalide ou inactif.');$sponsor=(int)$sp['id'];}
+   $s=$pdo->prepare('SELECT id FROM users WHERE email=?');$s->execute([$email]);if($s->fetch())throw new RuntimeException('Cette adresse e-mail est déjà utilisée.');
+   $c=code($pdo);$s=$pdo->prepare("INSERT INTO users(name,email,phone,password_hash,referral_code,sponsor_id,status) VALUES(?,?,?,?,?,?, 'pending_payment')");$s->execute([$name,$email,$phone?:null,password_hash($pw,PASSWORD_DEFAULT),$c,$sponsor]);$id=(int)$pdo->lastInsertId();$cfg=cfg();
+   $s=$pdo->prepare("INSERT INTO activation_payments(user_id,amount,currency,provider,checkout_url,status) VALUES(?,?,?,?,?,'pending')");$s->execute([$id,$cfg['activation_fee'],$cfg['currency'],'Maketou',$cfg['checkout_url']]);$pdo->commit();session_regenerate_id(true);$_SESSION['uid']=$id;go('payment.php');
+ } catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();$error=$e instanceof RuntimeException?$e->getMessage():'Inscription impossible. Réessayez.';if(!($e instanceof RuntimeException))error_log($e->getMessage());} }
+}
+?><!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Inscription — InvestiCash</title><link rel="stylesheet" href="assets/css/app.css"></head><body><main class="auth-wrap"><a class="brand" href="index.php"><span class="brand-mark">IC</span> InvestiCash</a><section class="auth-card"><span class="eyebrow">REJOIGNEZ LE RÉSEAU</span><h1>Créer un compte</h1><p>Votre compte restera en attente jusqu'à la vérification du paiement.</p><?php if($error): ?><div class="alert error"><?=e($error)?></div><?php endif; ?><form method="post"><?=csrf()?><label>Nom complet<input name="name" required maxlength="120" value="<?=e((string)($_POST['name']??''))?>"></label><label>Adresse e-mail<input type="email" name="email" required maxlength="190" value="<?=e((string)($_POST['email']??''))?>"></label><label>Téléphone (facultatif)<input name="phone" maxlength="30" value="<?=e((string)($_POST['phone']??''))?>"></label><label>Code du parrain (facultatif)<input name="ref" maxlength="32" value="<?=e($ref)?>"></label><label>Mot de passe<input type="password" name="password" minlength="10" required></label><label>Confirmer le mot de passe<input type="password" name="password2" required></label><label class="terms"><input type="checkbox" name="terms" value="1" required> J'accepte les conditions et la politique de confidentialité.</label><button class="btn btn-full">Créer mon compte →</button></form><p>Déjà inscrit ? <a href="login.php">Connexion</a></p><p class="fine">L'activation intervient après vérification du paiement. Consultez les conditions avant de payer.</p></section></main></body></html>
